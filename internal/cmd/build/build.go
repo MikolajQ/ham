@@ -156,8 +156,9 @@ func NewCommand() *cli.Command {
 					return checkErrorStatus(&status, err)
 				}
 
-				// We are tracking stable LTS release of Ubuntu
-				// Ubuntu 20.04 (Focal)
+				// Ubuntu 24.04 LTS on the Hetzner VM. Names match noble:
+				// libncurses5* are gone, and current LineageOS needs erofs,
+				// protobuf and xxd on top of the old host package list.
 				deps := []string{
 					"bc",
 					"bison",
@@ -174,7 +175,9 @@ func NewCommand() *cli.Command {
 					"lib32ncurses-dev",
 					"lib32readline-dev",
 					"lib32z1-dev",
+					"libdw-dev",
 					"libelf-dev",
+					"libgnutls28-dev",
 					"liblz4-tool",
 					"libncurses6",
 					"libncurses-dev",
@@ -182,16 +185,23 @@ func NewCommand() *cli.Command {
 					"libssl-dev",
 					"libxml2",
 					"libxml2-utils",
+					"lz4",
 					"lzop",
 					"pngcrush",
+					"protobuf-compiler",
+					"python3-protobuf",
+					"python-is-python3",
 					"rsync",
 					"schedtool",
 					"squashfs-tools",
 					"xsltproc",
+					"xxd",
 					"zip",
 					"zlib1g-dev",
 					"android-sdk-platform-tools",
+					"erofs-utils",
 					"git-lfs",
+					"zram-tools",
 				}
 
 				// The user can also install their own deps
@@ -216,6 +226,13 @@ func NewCommand() *cli.Command {
 					"echo 'export CCACHE_EXEC=/usr/bin/ccache' >> ~/.profile",
 					"ccache -M 50G",
 					"ccache -o compression=true",
+					// zram disk sized to RAM (32 GB on CCX33). zstd only
+					// consumes RAM for pages that actually get swapped.
+					"printf '%s\\n' ALGO=zstd PERCENT=100 PRIORITY=100 > /etc/default/zramswap",
+					"systemctl enable --now zramswap.service",
+					"systemctl restart zramswap.service",
+					"sysctl -w vm.swappiness=180",
+					"sysctl -w vm.page-cluster=0",
 				}
 
 				for varName, varValue := range vars {

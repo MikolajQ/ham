@@ -8,9 +8,6 @@ import (
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
 
-// Change this if needed in the future when
-// Hetzner deprecates Ubuntu 20.04 LTS, or if it
-// is that time of the year.
 const (
 	TargetImage = "ubuntu-24.04"
 
@@ -44,7 +41,7 @@ func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName s
 	)
 
 	sshList := []*hcloud.SSHKey{sshKey}
-	if err != nil {
+	if err == nil && defKey != nil {
 		sshList = append(sshList, defKey)
 	}
 

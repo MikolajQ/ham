@@ -22,7 +22,7 @@ After you create a git repository with a stable ham recipe, request to move the 
 :::
 
 HAM (Hetzner Android Make) is a Simple tool written in GO which can build LineageOS (or AOSP) from Source using 
-Hetzner Cloud. **Build your Own Flavor of Android Under €1.** (Run Directly from your Android Phone too..)
+Hetzner Cloud, on a temporary CCX33 (8 vCPU, 32 GB RAM, zram, 400 GB volume). (Run Directly from your Android Phone too..)
 
 Please install HAM for your Platform and Architecture and follow the Tutorial
 
@@ -175,7 +175,7 @@ post_build:
 ## Why Only Hetzner and not Cloud Provider X
 
 Hetzner is the only cloud provider which has predictable pricing and good bandwidth. Bandwidth is not the only thing that
-makes Hetzner perfect, all other cloud providers don't provide **16 vCPUs AMD, 32 GB RAM, 10 GBit Internet and 320GB Storage** for the price point they give. Also all Hetzner Cloud instance has **20 TB** bandwidth.
+makes Hetzner practical for this. HAM uses **CCX33 (8 dedicated vCPU, 32 GB RAM)** plus a **400 GB volume** and zram. Outbound traffic included with the server is large (20 TB on current plans). The hourly rate follows Hetzner's current CCX33 price.
 
 To summarize,
 
