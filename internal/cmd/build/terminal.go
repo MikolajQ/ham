@@ -82,14 +82,13 @@ func (Term *Terminal) WaitTerminal(Index int) error {
 	for {
 		time.Sleep(1 * time.Second)
 
-		// Timeout if a we wait for a single command
-		// more than 8 hours.
+		// One recipe step. repo sync and brunch on 8 cores can
+		// run past 8 hours; the cap does not change the hourly rate.
 		now := time.Now().In(loc)
 		diff := now.Sub(started)
 		hours := int(diff.Hours())
 
-		// Error out if difference is 8 hours or more.
-		if hours >= 8 {
+		if hours >= 24 {
 			return errors.New(fmt.Sprintf("Commad Timeout at Entry %d", Index))
 		}
 
