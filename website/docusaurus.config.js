@@ -7,7 +7,7 @@ const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Ham',
-  tagline: 'Build Your Own Flavor of Android under One Euro',
+  tagline: 'Build LineageOS or AOSP on a temporary Hetzner CCX33',
   url: 'https://antonyjr.in',
   baseUrl: '/ham',
   onBrokenLinks: 'throw',

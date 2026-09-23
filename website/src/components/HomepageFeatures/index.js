@@ -49,19 +49,18 @@ const FeatureList = [
     Svg: require('@site/static/img/fast.svg').default,
     description: (
       <>
-	 Unlike a CI/CD, We don't use any container like Docker or LXC and directly run the build script
-	 on the VPS created by Hetzner Ubuntu 20.04 LTS image, this gives us extra edge on performance.
+	 The recipe runs directly on the Hetzner VM (Ubuntu 24.04), without Docker or LXC.
       </>
     ),
   },
   {
-    title: 'Very Low Cost',
+    title: 'Billed by the hour',
     Svg: require('@site/static/img/cheap.svg').default,
     description: (
       <>
-	 Unlike other cloud companies, Hetzner gives the best performance for the cost,
-	 LineageOS build for single device only cost <b>0.30 euros</b> which took only
-	 <b> 3 hours</b> to finish. That's just <b>32 cents</b> in the US. 
+	 The build machine is a CCX33 (8 vCPU, 32 GB RAM, zram) plus a 400 GB volume.
+	 In Germany that server is about <b>€0.22 per hour</b> before VAT (Hetzner list of 15 June 2026),
+	 and the volume is a few tens of cents for a build. Both are deleted when the job finishes.
       </>
     ),
   },

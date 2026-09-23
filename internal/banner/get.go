@@ -82,15 +82,13 @@ func GetCmdProgressBanner() {
 func GetServerPriceInformationBanner(name string, price float64) {
 	in := "# Price Information\n"
 	in += "Server Name: %s\n\n"
-	in += "Gross Price: **%f** euros/hour.\n\n"
-	in += "Aproximate Total Price: **%f** euros/build.\n\n"
-	in += "The price might go higher or lower depending on the build but there are precautions taken"
-	in += " to not allow the server to run beyond 24 hours. So the maximum you might pay at the worst"
-	in += " case is **%f euros**.\n\n"
-	in += "**Disclaimer**: There are lot of precautions taken to destroy the server if it runs beyond"
-	in += " 24 hours, but this is not a promise or waranty of any means, you should always run ```ham clean```"
-	in += " after each ```ham get``` run and you are responsible to check for any active servers running."
-	in = fmt.Sprintf(in, name, price, price*8.0, price*24.0)
+	in += "Gross price: **%.4f** euros/hour.\n\n"
+	in += "The bill is this rate times the hours the server exists, plus the 400 GB volume. "
+	in += "The server and volume are deleted when the build finishes. "
+	in += "A later `ham get` or `ham clean` also deletes build servers older than 24 hours. "
+	in += "That sweep does not stop a build that is still running, so check the Hetzner project after `ham get` "
+	in += "and run `ham clean` if a server is left behind.\n"
+	in = fmt.Sprintf(in, name, price)
 
 	out, _ := glamour.Render(in, "auto")
 	fmt.Print(out)

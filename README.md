@@ -25,10 +25,7 @@ and have no relationship with the company. This project purely exists for the co
 
 # Hetzner Referral Program
 
-Hetzner Online Gmbh has a referral program for loyal customers, if you signup using my referral link you will get free
-20 euros cloud credit which you can build a ton of LineageOS builds for any device you like. The only problem is that 
-Hetzner is pretty hard to register with but it is worth it. **I don't force you to use my referral link, it's totally upto
-you.** [Hetzner Referral Link](https://hetzner.cloud/?ref=66oUbG2e4jXS)
+Hetzner has a referral program. Signing up with the link below is optional. [Hetzner Referral Link](https://hetzner.cloud/?ref=66oUbG2e4jXS)
 
 Consider using the referral link as support towards this project. You can also star this repository to increase the
 credibility of this project.

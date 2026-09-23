@@ -7,8 +7,7 @@ tags: [enchilada, guide, lineageos19.1, oneplus6]
 
 :::info
 
-This guide needs the [ham tool](https://antony-jr.github.io/ham/) to build, this guide cannot be used without
-that tool. HAM(Hetzner Android Make) helps you build your own flavor of Android under one Euro using Hetzner Cloud.
+This guide needs the [ham tool](https://antony-jr.github.io/ham/) to build. HAM builds LineageOS on a temporary Hetzner CCX33 (8 vCPU, 32 GB RAM, zram, 400 GB volume) and deletes the server when the build finishes.
 
 :::
 

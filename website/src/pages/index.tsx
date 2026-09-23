@@ -53,8 +53,8 @@ export default function Home() {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title="Build Android Under One Euro"
-      description="Ham is simple tool written in GO which can build Andorid Under 1 Euro using Hetzner Cloud">
+      title="Build LineageOS on Hetzner Cloud"
+      description="HAM builds LineageOS or AOSP on a temporary Hetzner CCX33 (8 vCPU, 32 GB RAM, zram, Ubuntu 24.04, 400 GB volume) and deletes the server when the build finishes.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

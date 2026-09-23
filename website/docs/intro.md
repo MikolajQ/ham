@@ -191,9 +191,7 @@ To summarize,
 
 * They are based on Germany thus follows GDPR which means your Build Server's Data is Protected
 
-* They are the Cheapest and Most Reliable Cloud Provider
-
-* Referral Program gives new users free 20 euros cloud credit
+* CCX33 is about €0.22 per hour before VAT in Germany (15 June 2026 price list), and the server is deleted after the build
 
 * Hetzner is a Big Company as AWS and GCP but not that Popular
 
@@ -208,20 +206,14 @@ Unix philosophy that a program should only do one and one thing only, and do tha
 
 ## Why not CI/CD self-hosted?
 
-Yes there are a lot of options and solutions for this problem, but none of it offers the lower cost per build like this 
-tool, Thanks to Hetzner, cloud is very cheap and powerful at the same time. Cloud's ultimate power comes to it's scaling 
-powers, but in CI/CD build systems, there is no way to scale down to zero (which is the ultimate scalability). We waste 
-a lot of computing resources doing noting but waiting for a cron job to actually do the work. 
+HAM creates a server for the build and deletes it when the job finishes, so the bill is the hours the CCX33 actually ran. A self-hosted runner stays up between builds. 
 
 With **HAM**, we can scale the cloud down to zero, ham creates a temporary server, reads a recipe and setups the 
 environment and securely transfers required files and variables over SSH, starts the build and tracks it. Even if the 
 client program closes for some reason, the server is still running and building Android. Server destroys itself when 
 the work is finished without wasting costly computing resources.
 
-**LineageOS 19.1 Signed Build for a Single Device(OnePlus 6) cost me about €0.30, the runtime of the build is around 
-2-3 hours.** I don't need to stay awake for the build, it just runs over night and the server destroys itself when the 
-job is done. **And the best part is, the client program can be run from Termux too, so I can just use my Android Phone 
-to build a new Android OS for itself (remotely).**
+A build that runs for several hours costs a few euros at the current CCX33 rate, then the server and the 400 GB volume are deleted. The client also runs in Termux, so the same build can be started from an Android phone.
 
 Also I have seen some Github Actions which can create you Hetzner Server and Destroy it after running some command,
 This is good too, but Ham gives other features like getting Variables and Files from the user and uploads it securely
@@ -238,10 +230,7 @@ and have no relationship with the company. This project purely exists for the co
 
 ## Hetzner Referral Program
 
-Hetzner Online Gmbh has a referral program for loyal customers, if you signup using my referral link you will get free
-20 euros cloud credit which you can build a ton of LineageOS builds for any device you like. The only problem is that 
-Hetzner is pretty hard to register with but it is worth it. **I don't force you to use my referral link, it's totally upto
-you.** [Hetzner Referral Link](https://hetzner.cloud/?ref=66oUbG2e4jXS)
+Hetzner has a referral program. Signing up with the link below is optional. [Hetzner Referral Link](https://hetzner.cloud/?ref=66oUbG2e4jXS)
 
 Consider using the referral link as support towards this project. You can also star the project to make it more
 credible.
