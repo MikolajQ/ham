@@ -33,5 +33,6 @@ func Run() error {
 		cli.Tree(build.NewCommand()),
 		cli.Tree(build.NewStatusCommand()),
 		cli.Tree(build.NewHaltCommand()),
+		cli.Tree(build.NewDestroySelfCommand()),
 	).Run(os.Args[1:])
 }

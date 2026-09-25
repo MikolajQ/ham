@@ -131,8 +131,14 @@ func NewCommand() *cli.Command {
 			defer func() {
 				if succeeded || !argv.KeepServer {
 					destroyCurrentServer(client, hf.SHA256Sum)
+					return
 				}
+				scheduleFailedServerCleanup(hf.SHA256Sum)
 			}()
+
+			// A new run on a kept server cancels the cleanup left by
+			// the failed one.
+			_ = exec.Command("systemctl", "stop", FailedServerUnit+".timer", FailedServerUnit+".service").Run()
 
 			vars, err := helpers.ReadVarsJsonFile(argv.VarsPath)
 			if err != nil {
@@ -207,7 +213,6 @@ func NewCommand() *cli.Command {
 					"android-sdk-platform-tools",
 					"erofs-utils",
 					"git-lfs",
-					"zram-tools",
 				}
 
 				// The user can also install their own deps
@@ -232,13 +237,19 @@ func NewCommand() *cli.Command {
 					// No ccache: every build runs on a fresh server, so
 					// the cache is always cold and only adds overhead.
 					// A rerun on a kept server is incremental through out/.
-					// zram disk sized to RAM (32 GB on CCX33). zstd only
-					// consumes RAM for pages that actually get swapped.
-					"printf '%s\\n' ALGO=zstd PERCENT=100 PRIORITY=100 > /etc/default/zramswap",
-					"systemctl enable --now zramswap.service",
-					"systemctl restart zramswap.service",
-					"sysctl -w vm.swappiness=180",
-					"sysctl -w vm.page-cluster=0",
+					// zram disk sized to RAM (32 GB). zstd only consumes
+					// RAM for pages that actually get swapped. On Ubuntu
+					// 24.04 zram.ko ships in linux-modules-extra, which a
+					// cloud image may lack. zram is an optimisation, the
+					// recipe's swap file is the safety net, so any failure
+					// here only prints a warning.
+					apt + " install -y -qq linux-modules-extra-$(uname -r) zram-tools || echo 'zram: pakiety niedostępne'",
+					"if modprobe zram; then " +
+						"printf '%s\\n' ALGO=zstd PERCENT=100 PRIORITY=100 > /etc/default/zramswap && " +
+						"systemctl enable zramswap.service && systemctl restart zramswap.service && " +
+						"sysctl -w vm.swappiness=180 && sysctl -w vm.page-cluster=0 && swapon --show " +
+						"|| echo 'zram: konfiguracja nieudana, build idzie bez zram'; " +
+						"else echo 'zram: brak modułu, build idzie bez zram'; fi",
 				}
 
 				for varName, varValue := range vars {
@@ -429,6 +440,36 @@ func destroyCurrentServer(client *hcloud.Client, UniqueID string) {
 	if err != nil {
 		fmt.Println("Server Destroy Failed: ", err.Error())
 	}
+}
+
+// Transient systemd unit on the build server that deletes a kept,
+// failed build after FailedServerTTL. Kept servers used to run until
+// the client or its watchdog came back, which costs money when that
+// machine is switched off. `touch /tmp/ham-keep` or
+// `systemctl stop ham-ttl.timer` keeps the server.
+const (
+	FailedServerUnit = "ham-ttl"
+	FailedServerTTL  = 6 * time.Hour
+	KeepServerFile   = "/tmp/ham-keep"
+)
+
+func scheduleFailedServerCleanup(UniqueID string) {
+	self, err := os.Executable()
+	if err != nil {
+		self = "/usr/bin/ham"
+	}
+
+	_ = exec.Command("systemctl", "stop", FailedServerUnit+".timer", FailedServerUnit+".service").Run()
+	out, err := exec.Command("systemd-run",
+		"--unit="+FailedServerUnit,
+		fmt.Sprintf("--on-active=%ds", int(FailedServerTTL.Seconds())),
+		self, "destroy-self", "--sum", UniqueID).CombinedOutput()
+	if err != nil {
+		fmt.Println("Cannot Schedule Server Cleanup: ", err.Error(), string(out))
+		return
+	}
+	fmt.Printf("Failed build kept. Server deletes itself in %s unless %s exists.\n",
+		FailedServerTTL, KeepServerFile)
 }
 
 // The volume is detached while this server still runs, so nothing

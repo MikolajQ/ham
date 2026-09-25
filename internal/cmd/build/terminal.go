@@ -84,13 +84,14 @@ func (Term *Terminal) WaitTerminal(Index int) error {
 	for {
 		time.Sleep(1 * time.Second)
 
-		// One recipe step. repo sync and brunch on 8 cores can
-		// run past 8 hours; the cap does not change the hourly rate.
+		// One recipe step. The longest one, the whole build, took
+		// about 4.5 hours on CCX33; a step past 12 hours is hanging
+		// (e.g. repo sync on a dead connection) and only costs money.
 		now := time.Now().In(loc)
 		diff := now.Sub(started)
 		hours := int(diff.Hours())
 
-		if hours >= 24 {
+		if hours >= 12 {
 			return errors.New(fmt.Sprintf("Commad Timeout at Entry %d", Index))
 		}
 
