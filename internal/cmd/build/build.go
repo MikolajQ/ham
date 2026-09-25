@@ -435,6 +435,12 @@ func destroyCurrentServer(client *hcloud.Client, UniqueID string) {
 // may use it any more: swap files on it go first (the recipe may put
 // one there), then the mount.
 func releaseBuildVolume() {
+	// A server with a big enough disk builds without a volume;
+	// /ham-build is then a plain directory and nothing is detached.
+	if exec.Command("mountpoint", "-q", "/ham-build").Run() != nil {
+		return
+	}
+
 	swaps, err := os.ReadFile("/proc/swaps")
 	if err == nil {
 		for _, line := range strings.Split(string(swaps), "\n") {

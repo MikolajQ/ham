@@ -168,7 +168,7 @@ func GetVolumeLinuxDeviceForServer(client *hcloud.Client, serverName string) (st
 		}
 	}
 
-	return "", errors.New("No Such Volume")
+	return "", ErrVolumeNotFound
 
 }
 

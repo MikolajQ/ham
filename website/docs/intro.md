@@ -22,7 +22,7 @@ After you create a git repository with a stable ham recipe, request to move the 
 :::
 
 HAM (Hetzner Android Make) is a Simple tool written in GO which can build LineageOS (or AOSP) from Source using 
-Hetzner Cloud, on a temporary CCX33 (8 vCPU, 32 GB RAM, zram, 400 GB volume). (Run Directly from your Android Phone too..)
+Hetzner Cloud, on a temporary CPX62 (16 shared vCPU, 32 GB RAM, zram, 640 GB local disk), or a CCX33 with a 400 GB volume when no CPX62 is available. (Run Directly from your Android Phone too..)
 
 Please install HAM for your Platform and Architecture and follow the Tutorial
 
@@ -175,7 +175,7 @@ post_build:
 ## Why Only Hetzner and not Cloud Provider X
 
 Hetzner is the only cloud provider which has predictable pricing and good bandwidth. Bandwidth is not the only thing that
-makes Hetzner practical for this. HAM uses **CCX33 (8 dedicated vCPU, 32 GB RAM)** plus a **400 GB volume** and zram. Outbound traffic included with the server is large (20 TB on current plans). The hourly rate follows Hetzner's current CCX33 price.
+makes Hetzner practical for this. HAM uses **CPX62 (16 shared vCPU, 32 GB RAM, 640 GB disk)** with zram, and falls back to **CCX33 (8 dedicated vCPU)** plus a **400 GB volume**. Outbound traffic included with the server is large (20 TB on current plans). The hourly rate follows Hetzner's current price for the type that was created.
 
 To summarize,
 
@@ -191,7 +191,7 @@ To summarize,
 
 * They are based on Germany thus follows GDPR which means your Build Server's Data is Protected
 
-* CCX33 is about €0.22 per hour before VAT in Germany (15 June 2026 price list), and the server is deleted after the build
+* CPX62 is about €0.26 per hour and CCX33 about €0.27 per hour including German VAT (Hetzner API, 25 September 2026); the server is deleted after the build
 
 * Hetzner is a Big Company as AWS and GCP but not that Popular
 
@@ -206,14 +206,14 @@ Unix philosophy that a program should only do one and one thing only, and do tha
 
 ## Why not CI/CD self-hosted?
 
-HAM creates a server for the build and deletes it when the job finishes, so the bill is the hours the CCX33 actually ran. A self-hosted runner stays up between builds. 
+HAM creates a server for the build and deletes it when the job finishes, so the bill is the hours the server actually ran. A self-hosted runner stays up between builds. 
 
 With **HAM**, we can scale the cloud down to zero, ham creates a temporary server, reads a recipe and setups the 
 environment and securely transfers required files and variables over SSH, starts the build and tracks it. Even if the 
 client program closes for some reason, the server is still running and building Android. Server destroys itself when 
 the work is finished without wasting costly computing resources.
 
-A build that runs for several hours costs a few euros at the current CCX33 rate, then the server and the 400 GB volume are deleted. The client also runs in Termux, so the same build can be started from an Android phone.
+A build that runs for several hours costs a few euros at the current rate, then the server (and its volume, if it had one) is deleted. The client also runs in Termux, so the same build can be started from an Android phone.
 
 Also I have seen some Github Actions which can create you Hetzner Server and Destroy it after running some command,
 This is good too, but Ham gives other features like getting Variables and Files from the user and uploads it securely

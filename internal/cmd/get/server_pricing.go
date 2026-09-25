@@ -1,7 +1,6 @@
 package get
 
 import (
-	//"fmt"
 	"context"
 	"errors"
 	"strconv"
@@ -10,73 +9,66 @@ import (
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
 
-func GrossServerPriceForServerWithHighestPerformance(client *hcloud.Client) (float64, *hcloud.ServerType, error) {
-	// CCX33
-	// vCPU: 8
-	// Memory: 32 GB
-	// Disk: 240 GB
-	// Additional Volume: 400 GB for Lineage Build
-	return GrossServerPriceForServerType(client, "ccx33" /*"cpx51"*/)
+// Tried in order when no type is given on the command line.
+//
+// CPX62: 16 shared vCPU, 32 GB RAM, 640 GB local NVMe. Cheaper than
+// CCX33 per hour and big enough to build on its own disk, so no
+// volume is created.
+//
+// CCX33: 8 dedicated vCPU, 32 GB RAM, 240 GB disk plus a 400 GB
+// volume. Used only when Hetzner has no CPX62 capacity anywhere.
+var DefaultServerTypes = []string{"cpx62", "ccx33"}
+
+type ServerCandidate struct {
+	Type  *hcloud.ServerType
+	Price float64
 }
 
-func GrossServerPriceForServerType(client *hcloud.Client, serverType string) (float64, *hcloud.ServerType, error) {
-	// Note: Adjust this if wanted in the future.
-	// DE Nuremberg
-	// is the most cheapest and stable server for hetzner
-	// also, since this datacenter is in Germany we get to
-	// enjoy GDPR.
-	const (
-		TargetLocation = "nbg1"
-	)
+// Price lookup happens in this location. nbg1, fsn1 and hel1 have
+// had the same rates so far.
+const PriceLocation = "nbg1"
 
+func ServerCandidates(client *hcloud.Client, names []string) ([]ServerCandidate, error) {
 	pricing, _, err := client.Pricing.Get(context.Background())
 	if err != nil {
-		return 0.0, nil, err
+		return nil, err
 	}
 
-	for _, server := range pricing.ServerTypes {
-		// fmt.Printf("Server Name: %s\n", server.ServerType.Name)
-		// fmt.Printf("Server Cores: %d\n", server.ServerType.Cores)
-		// fmt.Printf("Server Memory: %f\n", server.ServerType.Memory)
-		// fmt.Printf("Server Disk: %d\n", server.ServerType.Disk)
+	var candidates []ServerCandidate
+	for _, name := range names {
+		for _, server := range pricing.ServerTypes {
+			if server.ServerType.Name != name {
+				continue
+			}
 
-		var hourlyPrice hcloud.Price
-		priceAvail := false
-		// fmt.Printf("Locations: ")
-		for _, entry := range server.Pricings {
-			// fmt.Printf("%s ", entry.Location.Name)
-			if strings.ToLower(entry.Location.Name) == TargetLocation {
-				hourlyPrice = entry.Hourly
-				priceAvail = true
+			for _, entry := range server.Pricings {
+				if strings.ToLower(entry.Location.Name) != PriceLocation {
+					continue
+				}
+
+				amount, err := strconv.ParseFloat(entry.Hourly.Gross, 64)
+				if err != nil {
+					return nil, errors.New("Invalid Price Given")
+				}
+
+				// Pricing only carries the type's name; the full type
+				// (disk size, architecture) comes from the type API.
+				serverType, _, err := client.ServerType.GetByName(context.Background(), name)
+				if err != nil {
+					return nil, err
+				}
+				if serverType == nil {
+					break
+				}
+
+				candidates = append(candidates, ServerCandidate{serverType, amount})
 				break
 			}
 		}
-		// fmt.Printf("\n\n")
-
-		if !priceAvail {
-			continue
-		}
-
-		amount, err := strconv.ParseFloat(hourlyPrice.Gross, 64)
-		if err != nil {
-			return 0.0, nil, errors.New("Invalid Price Given")
-		}
-
-		if len(serverType) != 0 {
-			if server.ServerType.Name == serverType {
-				return amount, server.ServerType, nil
-			}
-		} else {
-			// For Some Reason, These all returns Zero
-			// Maybe bug in the upstream library?
-			// TODO: Look into this.
-			if server.ServerType.Cores >= 8 &&
-				server.ServerType.Memory >= 32.0 &&
-				server.ServerType.Disk >= 240 {
-				return amount, server.ServerType, nil
-			}
-		}
 	}
 
-	return 0.0, nil, errors.New("Cannot Find Suitable Server")
+	if len(candidates) == 0 {
+		return nil, errors.New("Cannot Find Suitable Server (" + strings.Join(names, ", ") + ")")
+	}
+	return candidates, nil
 }

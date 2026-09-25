@@ -16,27 +16,29 @@ const (
 // server type there. The volume is created in the same location.
 var TargetLocations = []string{"nbg1", "fsn1", "hel1"}
 
-func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName string) (*hcloud.Server, error) {
-	// Get Server Image
-	serverImage, _, err := client.Image.GetForArchitecture(
-		context.Background(),
-		TargetImage,
-		server.Architecture,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if serverImage == nil {
-		return nil, errors.New("Image " + TargetImage + " not found")
-	}
+// Sources, out/ and a swap file of a current LineageOS build need
+// roughly 400 GB. A server whose own disk is at least this big (in
+// GB) builds there; a smaller one gets a volume on /ham-build.
+const (
+	MinLocalDiskGB = 500
+	VolumeSizeGB   = 400
+)
 
+func NeedsVolume(serverType *hcloud.ServerType) bool {
+	return serverType.Disk < MinLocalDiskGB
+}
+
+// Types are tried in the given order, each in every location, before
+// moving to the next type. Only a lack of capacity moves on; any
+// other error stops.
+func CreateServer(client *hcloud.Client, types []*hcloud.ServerType, serverName string) (*hcloud.Server, *hcloud.ServerType, error) {
 	// Get ham-ssh-key SSH Key
 	sshKey, _, err := client.SSHKey.Get(
 		context.Background(),
 		"ham-ssh-key",
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defKey, _, err := client.SSHKey.Get(
@@ -50,19 +52,36 @@ func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName s
 	}
 
 	var lastErr error
-	for _, locationName := range TargetLocations {
-		created, err := createServerAt(client, server, serverName, serverImage, sshList, locationName)
-		if err == nil {
-			return created, nil
+	for _, server := range types {
+		serverImage, _, err := client.Image.GetForArchitecture(
+			context.Background(),
+			TargetImage,
+			server.Architecture,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		if serverImage == nil {
+			return nil, nil, errors.New("Image " + TargetImage + " not found")
 		}
 
-		lastErr = err
-		if !isCapacityError(err) {
-			return nil, err
+		for _, locationName := range TargetLocations {
+			created, err := createServerAt(client, server, serverName, serverImage, sshList, locationName)
+			if err == nil {
+				return created, server, nil
+			}
+
+			lastErr = err
+			if !isCapacityError(err) {
+				return nil, nil, err
+			}
 		}
 	}
 
-	return nil, lastErr
+	if lastErr == nil {
+		lastErr = errors.New("No server type to create")
+	}
+	return nil, nil, lastErr
 }
 
 func createServerAt(client *hcloud.Client, server *hcloud.ServerType, serverName string,
@@ -79,45 +98,48 @@ func createServerAt(client *hcloud.Client, server *hcloud.ServerType, serverName
 	}
 
 	startAfterCreate := true
-	automountVol := false
 
-	// We need Special Volume of Size 400 GB
-	// to hold only the lineage os build,
-	// this will future proof this app.
-	volCreateOpts := hcloud.VolumeCreateOpts{
-		Name:      serverName + "-vol",
-		Size:      400,
-		Location:  location,
-		Automount: &automountVol,
-	}
+	var volumes []*hcloud.Volume
+	deleteVolume := func() {}
 
-	err = volCreateOpts.Validate()
-	if err != nil {
-		return nil, err
-	}
+	if NeedsVolume(server) {
+		automountVol := false
+		volCreateOpts := hcloud.VolumeCreateOpts{
+			Name:      serverName + "-vol",
+			Size:      VolumeSizeGB,
+			Location:  location,
+			Automount: &automountVol,
+		}
 
-	// Create Volume of 400 GiB
-	volCreateResult, _, err := client.Volume.Create(
-		context.Background(),
-		volCreateOpts,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	deleteVolume := func() {
-		_, _ = client.Volume.Delete(
-			context.Background(),
-			volCreateResult.Volume,
-		)
-	}
-
-	if volCreateResult.Action != nil {
-		err = client.Action.WaitFor(context.Background(), volCreateResult.Action)
+		err = volCreateOpts.Validate()
 		if err != nil {
-			deleteVolume()
 			return nil, err
 		}
+
+		volCreateResult, _, err := client.Volume.Create(
+			context.Background(),
+			volCreateOpts,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		deleteVolume = func() {
+			_, _ = client.Volume.Delete(
+				context.Background(),
+				volCreateResult.Volume,
+			)
+		}
+
+		if volCreateResult.Action != nil {
+			err = client.Action.WaitFor(context.Background(), volCreateResult.Action)
+			if err != nil {
+				deleteVolume()
+				return nil, err
+			}
+		}
+
+		volumes = []*hcloud.Volume{volCreateResult.Volume}
 	}
 
 	// Server Creation Options
@@ -133,7 +155,7 @@ func createServerAt(client *hcloud.Client, server *hcloud.ServerType, serverName
 			EnableIPv4: true,
 			EnableIPv6: false,
 		},
-		Volumes: []*hcloud.Volume{volCreateResult.Volume},
+		Volumes: volumes,
 	}
 
 	err = serverCreateOpts.Validate()

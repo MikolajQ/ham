@@ -79,16 +79,21 @@ func GetCmdProgressBanner() {
 	fmt.Print(out)
 }
 
-func GetServerPriceInformationBanner(name string, price float64) {
+// One line per server type, in the order they are tried. The first
+// one with free capacity at Hetzner is created.
+func GetServerPriceInformationBanner(lines []string) {
 	in := "# Price Information\n"
-	in += "Server Name: %s\n\n"
-	in += "Gross price: **%.4f** euros/hour.\n\n"
-	in += "The bill is this rate times the hours the server exists, plus the 400 GB volume. "
-	in += "The server and volume are deleted when the build finishes. "
-	in += "A later `ham get` or `ham clean` also deletes build servers older than 24 hours. "
-	in += "That sweep does not stop a build that is still running, so check the Hetzner project after `ham get` "
-	in += "and run `ham clean` if a server is left behind.\n"
-	in = fmt.Sprintf(in, name, price)
+	for _, line := range lines {
+		in += "* " + line + "\n"
+	}
+	in += "\n"
+	if len(lines) > 1 {
+		in += "The first type Hetzner has capacity for is created; the next one is only a fallback. "
+	}
+	in += "The bill is the hourly rate times the hours the server (and volume, if any) exists. "
+	in += "After a successful build the server deletes its volume and itself, without the client. "
+	in += "A failed build kept with -k/-b stays until `ham clean`. "
+	in += "A later `ham get` or `ham clean` also deletes build servers older than 24 hours and volumes left without a server.\n"
 
 	out, _ := glamour.Render(in, "auto")
 	fmt.Print(out)

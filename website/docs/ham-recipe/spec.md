@@ -26,7 +26,7 @@ Example, LineageOS 19.1 build for OnePlus 6 device can have the Ham Recipe name 
 
 ## Build Environment
 
-During the build, your recipe will run on an **Ubuntu 24.04 LTS** virtual machine at Hetzner (CCX33: 8 dedicated vCPU, 32 GB RAM, 400 GB volume at `/ham-build`). By default the recipe
+During the build, your recipe will run on an **Ubuntu 24.04 LTS** virtual machine at Hetzner (CPX62: 16 shared vCPU, 32 GB RAM, `/ham-build` on the 640 GB local disk; fallback CCX33: 8 dedicated vCPU, 32 GB RAM, 400 GB volume mounted at `/ham-build`). By default the recipe
 will not be run in a docker container but will run directly on the VPS provided by Hetzner. We really don't need
 docker since the VM itself sort of acts like a container. **But you may install docker with apt install -y -qq, and 
 use docker image of your choice**, this decision is totally upto you.
@@ -34,7 +34,7 @@ use docker image of your choice**, this decision is totally upto you.
 By default we **install all the dependencies required to build LineageOS or AOSP**, we also install android platform
 tools by default, **you don't have to install these, in your recipe.** The host also enables **zram** (zstd, size equal to RAM) so a 32 GB machine can finish current LineageOS links without a larger server.
 
-**ccache is not set up**: every build runs on a fresh server, so the cache would always be cold. A rebuild on a kept server is incremental through `out/`. The server tries `nbg1` first and falls back to `fsn1` and `hel1` when Hetzner has no capacity. After a successful build the server detaches and deletes its volume and then deletes itself, even with `--keep-server` (that flag only keeps failed builds). We also install the **repo** command to the
+**ccache is not set up**: every build runs on a fresh server, so the cache would always be cold. A rebuild on a kept server is incremental through `out/`. The server tries `nbg1` first and falls back to `fsn1` and `hel1` when Hetzner has no capacity. After a successful build the server detaches and deletes its volume (if any) and then deletes itself, even with `--keep-server` (that flag only keeps failed builds). We also install the **repo** command to the
 system itself so no need to install that by yourself. We also install some useful tools and system libs. `python` points at Python 3.
 
 Each build will have the following directory created on the build environment for you to use,

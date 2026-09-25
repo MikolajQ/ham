@@ -6,7 +6,7 @@
 
 
 HAM (Hetzner Android Make) is a Simple tool written in GO which can build LineageOS (or AOSP) from Source using Hetzner Cloud. 
-Builds run on a temporary Hetzner CCX33 (8 vCPU, 32 GB RAM, zram, 400 GB volume). The client also runs from an Android phone.
+Builds run on a temporary Hetzner CPX62 (16 shared vCPU, 32 GB RAM, zram, 640 GB local disk). If Hetzner has no CPX62 capacity, HAM falls back to CCX33 (8 dedicated vCPU) with a 400 GB volume. `ham get -m <type>` picks another type. The client also runs from an Android phone.
 
 <p align="center">
   <img src="artwork/pc-preview.gif" height=auto width=auto alt="Ham Preview PC">  <br>

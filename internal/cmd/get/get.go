@@ -42,6 +42,7 @@ type getT struct {
 	TestingBinary           string `cli:"e,testing-binary" usage:"Path to ham-build binary to use in the Remote Server during Testing. (Developer)"`
 	TestingSSHIP            string `cli:"i,testing-ssh-ip" usage:"Run a Test Run without Creating Servers and Use the given IP as Build Server. (Developer)"`
 	Force                   bool   `cli:"f,force" usage:"Force start a build even if the recipe was built Already."`
+	ServerType              string `cli:"m,server-type" usage:"Hetzner server type, e.g. ccx33. Default: cpx62 (local disk), then ccx33 (+400 GB volume) if no capacity."`
 }
 
 func ParseGitRemoteString(remote string) (string, string) {
@@ -378,12 +379,29 @@ Local Recipe:
 				tuiSpinnerMsg.ShowMessage("Getting Server Information... ")
 
 				// Get Suitable Server and Price
-				price, serverType, err := GrossServerPriceForServerWithHighestPerformance(client)
+				typeNames := DefaultServerTypes
+				if argv.ServerType != "" {
+					typeNames = []string{strings.ToLower(argv.ServerType)}
+				}
+				candidates, err := ServerCandidates(client, typeNames)
 				if err != nil {
 					return err
 				}
+				var serverTypes []*hcloud.ServerType
+				var priceLines []string
+				for _, c := range candidates {
+					serverTypes = append(serverTypes, c.Type)
+					line := fmt.Sprintf("%s: %d vCPU (%s), %.0f GB RAM, %.4f euros/hour",
+						strings.ToUpper(c.Type.Name), c.Type.Cores, c.Type.CPUType, c.Type.Memory, c.Price)
+					if core.NeedsVolume(c.Type) {
+						line += fmt.Sprintf(", plus a %d GB volume", core.VolumeSizeGB)
+					} else {
+						line += fmt.Sprintf(", builds on its %d GB disk", c.Type.Disk)
+					}
+					priceLines = append(priceLines, line)
+				}
 				_ = tuiSpinnerMsg.StopMessage()
-				banner.GetServerPriceInformationBanner(strings.ToUpper(serverType.Name), price)
+				banner.GetServerPriceInformationBanner(priceLines)
 
 				confirmCreate := argv.NoConfirm
 
@@ -401,7 +419,7 @@ Local Recipe:
 				} else {
 					/* NOTE: Important Section. */
 					tuiSpinnerMsg.ShowMessage("Creating Server... ")
-					server, err := core.CreateServer(client, serverType, serverName)
+					server, usedType, err := core.CreateServer(client, serverTypes, serverName)
 					if err != nil {
 						destroyServer = !argv.KeepServer
 						return err
@@ -409,14 +427,17 @@ Local Recipe:
 					currentBuildServer = server
 					ipAddr = fmt.Sprintf("%s:22", currentBuildServer.PublicNet.IPv4.IP.String())
 					_ = tuiSpinnerMsg.StopMessage()
-					fmt.Printf(" %s Created Server\n", checkMark)
+					where := ""
+					if server.Location != nil {
+						where = ", " + server.Location.Name
+					}
+					fmt.Printf(" %s Created Server (%s%s)\n", checkMark, strings.ToUpper(usedType.Name), where)
 				}
 
-				volDevice, err := helpers.GetVolumeLinuxDeviceForServer(client, serverName)
+				volDevice, err := volumeDevice(client, serverName)
 				if err != nil {
 					return err
 				}
-				fmt.Printf(" %s Volume Device: %s\n", checkMark, volDevice)
 
 				err = doInitialize(ipAddr, config.SSHPrivateKey, volDevice, varsFilePath, fileUploads, usedGit, gitUrl, gitBranch, dir, argv.TestingBinary)
 				if err != nil {
@@ -520,11 +541,10 @@ Local Recipe:
 						tries = 0
 						defer os.Remove(varsFilePath)
 
-						volDevice, err := helpers.GetVolumeLinuxDeviceForServer(client, serverName)
+						volDevice, err := volumeDevice(client, serverName)
 						if err != nil {
 							return err
 						}
-						fmt.Printf(" %s Volume Device: %s\n", checkMark, volDevice)
 
 						err = doInitialize(ipAddr, config.SSHPrivateKey, volDevice, varsFilePath, fileUploads, usedGit, gitUrl, gitBranch, dir, argv.TestingBinary)
 						if err != nil {
@@ -1166,4 +1186,20 @@ func checkRemoteCommit(header string) error {
 			remote, core.ClientCommit)
 	}
 	return nil
+}
+
+// Empty when the server builds on its own disk (no volume was
+// created for it); /ham-build then stays a plain directory.
+func volumeDevice(client *hcloud.Client, serverName string) (string, error) {
+	volDevice, err := helpers.GetVolumeLinuxDeviceForServer(client, serverName)
+	if errors.Is(err, helpers.ErrVolumeNotFound) {
+		fmt.Printf(" %s No Volume, Building on Local Disk\n", checkMark)
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Printf(" %s Volume Device: %s\n", checkMark, volDevice)
+	return volDevice, nil
 }
