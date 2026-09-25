@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -23,7 +24,10 @@ import (
 )
 
 const (
-	HAM_LINUX_BINARY_URL string = "https://github.com/antony-jr/ham/releases/download/stable/ham-build-linux-amd64"
+	// Fork release, used only when no ham-build binary is found
+	// locally (see remoteBinaryPath). Whatever gets installed must
+	// report the same commit as this client.
+	HAM_LINUX_BINARY_URL string = "https://github.com/MikolajQ/ham/releases/download/continuous/ham-build-linux-amd64"
 )
 
 type getT struct {
@@ -802,15 +806,15 @@ func doInitialize(ipAddr string,
 	}
 
 	spinnerMsg.ShowMessage("Updating Environment... ")
-	_, err = tryExec("apt-get update -y -qq")
+	_, err = tryExec("apt-get -o Acquire::Retries=5 update -qq")
 	if err != nil {
 		return err
 	}
-	_, err = tryExec("apt-get upgrade -y -qq")
+	_, err = tryExec("DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Dpkg::Options::=--force-confold upgrade -y -qq")
 	if err != nil {
 		return err
 	}
-	_, err = tryExec("apt-get install -y -qq git wget curl")
+	_, err = tryExec("DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y -qq git wget curl")
 	if err != nil {
 		return err
 	}
@@ -819,15 +823,25 @@ func doInitialize(ipAddr string,
 	fmt.Printf(" %s Updated Environment\n", checkMark)
 
 	spinnerMsg.ShowMessage("Installing HAM Binary... ")
+	testingBin = remoteBinaryPath(testingBin)
 	if testingBin != "" {
 		err = helpers.SFTPCopyFileToRemote(sftpClient, "/usr/bin/ham", testingBin)
 	} else {
-		_, err = tryExec(fmt.Sprintf("wget -O /usr/bin/ham \"%s\"", HAM_LINUX_BINARY_URL))
+		_, err = tryExec(fmt.Sprintf("wget --tries=5 -O /usr/bin/ham \"%s\"", HAM_LINUX_BINARY_URL))
 	}
 	if err != nil {
 		return err
 	}
 	_, err = tryExec("chmod a+x /usr/bin/ham")
+	if err != nil {
+		return err
+	}
+
+	header, err := tryExec("/usr/bin/ham 2>&1 | head -n 1")
+	if err != nil {
+		return err
+	}
+	err = checkRemoteCommit(header)
 	if err != nil {
 		return err
 	}
@@ -1101,4 +1115,55 @@ func trackRemoteServerProgress(host string, sshPrivateKey string, tail chan stri
 
 	return shell.code, nil
 
+}
+
+// -e wins. Otherwise a ham-build (or ham-build-linux-amd64) next
+// to this client is uploaded, so the server runs the code built
+// together with the client and not a downloaded release.
+func remoteBinaryPath(testingBin string) string {
+	if testingBin != "" {
+		return testingBin
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	self, err = filepath.EvalSymlinks(self)
+	if err != nil {
+		return ""
+	}
+
+	for _, name := range []string{"ham-build", "ham-build-linux-amd64"} {
+		candidate := filepath.Join(filepath.Dir(self), name)
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+var headerCommit = regexp.MustCompile(`commit-([0-9A-Za-z._-]+)`)
+
+// The remote binary prints the same banner as this client. A build
+// on an older or upstream binary silently loses every fix made in
+// the fork, so a different commit stops the setup.
+func checkRemoteCommit(header string) error {
+	match := headerCommit.FindStringSubmatch(header)
+	if match == nil {
+		return errors.New("Cannot read commit of remote ham-build: " + strings.TrimSpace(header))
+	}
+
+	remote := match[1]
+	if core.ClientCommit == "" || core.ClientCommit == "Unknown" {
+		fmt.Printf(" Remote ham-build is commit %s (client commit unknown, not checked)\n", remote)
+		return nil
+	}
+
+	if remote != core.ClientCommit {
+		return fmt.Errorf("Remote ham-build is commit %s, client is %s. Rebuild both with `make local`.",
+			remote, core.ClientCommit)
+	}
+	return nil
 }

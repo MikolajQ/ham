@@ -6,6 +6,7 @@ import (
 
 	"github.com/antony-jr/ham/internal/banner"
 	"github.com/antony-jr/ham/internal/cli"
+	"github.com/antony-jr/ham/internal/core"
 )
 
 /*
@@ -16,6 +17,7 @@ var AppVersion = "Unknown"
 var GitCommit = "Unknown"
 
 func main() {
+	core.ClientCommit = GitCommit
 	banner.Header(AppVersion, GitCommit)
 	if err := cli.Run(); err != nil {
 		banner.Error(fmt.Sprint(err))

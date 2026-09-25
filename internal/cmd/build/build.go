@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -121,11 +123,16 @@ func NewCommand() *cli.Command {
 			}
 			client := hcloud.NewClient(hcloud.WithToken(config.APIKey))
 
-			// Destroy server
-			// on close.
-			if !argv.KeepServer {
-				defer destroyCurrentServer(client, hf.SHA256Sum)
-			}
+			// A successful build always destroys its server and
+			// volume from here, so nothing depends on the client
+			// staying alive. --keep-server only keeps a failed build
+			// around for debugging.
+			succeeded := false
+			defer func() {
+				if succeeded || !argv.KeepServer {
+					destroyCurrentServer(client, hf.SHA256Sum)
+				}
+			}()
 
 			vars, err := helpers.ReadVarsJsonFile(argv.VarsPath)
 			if err != nil {
@@ -163,7 +170,6 @@ func NewCommand() *cli.Command {
 					"bc",
 					"bison",
 					"build-essential",
-					"ccache",
 					"curl",
 					"flex",
 					"g++-multilib",
@@ -208,24 +214,24 @@ func NewCommand() *cli.Command {
 				// from the yaml file too. This just makes life
 				// so much easier when building a striaght forward
 				// build from lineage.
-				dep_install_command := fmt.Sprintf("DEBIAN_FRONTEND=noninteractive apt install -y -qq %s",
-					strings.Join(deps, " "))
+				// A mirror hiccup here would fail the whole build, so
+				// apt and curl retry before giving up.
+				apt := "apt-get -o Acquire::Retries=5 -o Dpkg::Options::=--force-confold"
+				dep_install_command := fmt.Sprintf("%s install -y -qq %s",
+					apt, strings.Join(deps, " "))
 
 				commands := []string{
 					"export DEBIAN_FRONTEND=noninteractive",
-					"apt update -y -qq",
-					"apt upgrade -y -qq",
+					apt + " update -qq",
+					apt + " upgrade -y -qq",
 					dep_install_command,
-					"curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/bin/repo",
+					"curl -fsSL --retry 5 --retry-all-errors -o /usr/bin/repo https://storage.googleapis.com/git-repo-downloads/repo",
 					"chmod a+x /usr/bin/repo",
 					"git config --global user.email \"ham@antonyjr.in\"",
 					"git config --global user.name \"Hetzner Android Make\"",
-					"echo 'export USE_CCACHE=1' >> ~/.bashrc",
-					"echo 'export USE_CCACHE=1' >> ~/.profile",
-					"echo 'export CCACHE_EXEC=/usr/bin/ccache' >> ~/.bashrc",
-					"echo 'export CCACHE_EXEC=/usr/bin/ccache' >> ~/.profile",
-					"ccache -M 50G",
-					"ccache -o compression=true",
+					// No ccache: every build runs on a fresh server, so
+					// the cache is always cold and only adds overhead.
+					// A rerun on a kept server is incremental through out/.
 					// zram disk sized to RAM (32 GB on CCX33). zstd only
 					// consumes RAM for pages that actually get swapped.
 					"printf '%s\\n' ALGO=zstd PERCENT=100 PRIORITY=100 > /etc/default/zramswap",
@@ -375,6 +381,7 @@ func NewCommand() *cli.Command {
 			}
 
 			hamSSHKey, _ = helpers.UpdateSSHKeyLabel(&client.SSHKey, hamSSHKey, serverName, "successful")
+			succeeded = true
 			status.Percentage = 100
 			status.Status = "Finished"
 			status.Title = "Completed"
@@ -409,7 +416,42 @@ func destroyCurrentServer(client *hcloud.Client, UniqueID string) {
 	serverName := helpers.ServerNameFromSHA256(UniqueID)
 	fmt.Println("Destroying ", serverName)
 
-	helpers.TryDeleteServer(client, serverName, 20, 5)
+	releaseBuildVolume()
+	err := helpers.DestroySelf(client, serverName)
+	if err == nil {
+		return
+	}
+
+	// The server is the expensive part. A volume left behind is
+	// removed by the next `ham get` or `ham clean`.
+	fmt.Println("Self Destroy Failed: ", err.Error())
+	err = helpers.DeleteServer(client, serverName)
+	if err != nil {
+		fmt.Println("Server Destroy Failed: ", err.Error())
+	}
+}
+
+// The volume is detached while this server still runs, so nothing
+// may use it any more: swap files on it go first (the recipe may put
+// one there), then the mount.
+func releaseBuildVolume() {
+	swaps, err := os.ReadFile("/proc/swaps")
+	if err == nil {
+		for _, line := range strings.Split(string(swaps), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && strings.HasPrefix(fields[0], "/ham-build/") {
+				out, err := exec.Command("swapoff", fields[0]).CombinedOutput()
+				if err != nil {
+					fmt.Println("swapoff ", fields[0], ": ", err.Error(), string(out))
+				}
+			}
+		}
+	}
+
+	_ = exec.Command("sync").Run()
+	if exec.Command("umount", "/ham-build").Run() != nil {
+		_ = exec.Command("umount", "-l", "/ham-build").Run()
+	}
 }
 
 func statusServer(state *statusT) {

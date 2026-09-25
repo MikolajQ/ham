@@ -15,6 +15,7 @@ import (
 )
 
 type Terminal struct {
+	cmd   *exec.Cmd
 	term  *os.File
 	index int
 	uid   string
@@ -31,6 +32,7 @@ func NewTerminal(UniqueID string) (Terminal, error) {
 		return t, err
 	}
 	t.term = ptmx
+	t.cmd = cmd
 
 	file, err := os.Create(fmt.Sprintf("/tmp/%s.ham.command.status", UniqueID))
 	if err != nil {
@@ -161,7 +163,7 @@ func (Term *Terminal) ExecTerminal(Index int, Command string) error {
 
 	if idx == Index {
 		if strings.Contains(wStatus, "failed") {
-			estr := fmt.Sprintf("Command Failed at Entry %d", idx+1)
+			estr := fmt.Sprintf("Command Failed at Entry %d", idx)
 			return errors.New(estr)
 		}
 	}
@@ -169,10 +171,21 @@ func (Term *Terminal) ExecTerminal(Index int, Command string) error {
 }
 
 func (Term *Terminal) CloseTerminal() error {
-	err := os.Remove(fmt.Sprintf("/tmp/%s.ham.command.status", Term.uid))
-	if err != nil {
-		return err
+	// Drop the traps before bash goes away. Closing the pty sends
+	// SIGHUP, and the EXIT trap would then write "<last index> failed"
+	// into the status file after a run that succeeded.
+	Term.term.Write([]byte("trap - ERR EXIT; exit 0\n"))
+
+	exited := make(chan struct{})
+	go func() {
+		Term.cmd.Wait()
+		close(exited)
+	}()
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
 	}
+
 	Term.term.Close()
-	return nil
+	return os.Remove(fmt.Sprintf("/tmp/%s.ham.command.status", Term.uid))
 }

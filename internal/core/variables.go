@@ -33,3 +33,7 @@ func (ctx *Variables) PutVar(key string, value string, ty VariableType) {
 		Type:  ty,
 	}
 }
+
+// Commit of the running client, set by main. Used to check that the
+// build server runs a ham-build from the same commit.
+var ClientCommit = "Unknown"

@@ -52,6 +52,19 @@ all:
 	GOOS="linux" \
 	go build -o release/ham-build-linux-amd64 -ldflags ${LDFLAGS} cmd/ham-build/ham-build.go
 
+# Client and server binary for this machine, from the same commit.
+# `ham get` uploads the ham-build lying next to ham and refuses a
+# server binary whose commit differs, so always install both.
+LOCAL_COMMIT = $(shell git rev-parse --short HEAD)$(shell git diff --quiet HEAD || echo -dirty)
+LOCAL_LDFLAGS = "-s -w -X main.AppVersion=1-alpha-noble -X main.GitCommit=$(LOCAL_COMMIT)"
+LOCAL_DIR ?= $(HOME)/bin/rhode
+
+local:
+	mkdir -p release
+	GOOS=linux GOARCH=amd64 go build -o release/ham -ldflags $(LOCAL_LDFLAGS) cmd/ham/ham.go
+	GOOS=linux GOARCH=amd64 go build -o release/ham-build -ldflags $(LOCAL_LDFLAGS) cmd/ham-build/ham-build.go
+	install -m 755 release/ham release/ham-build $(LOCAL_DIR)/
+
 clean:
 	rm -rf release
 

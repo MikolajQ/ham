@@ -23,6 +23,11 @@ func ServerNameFromSHA256(sum string) string {
 	return serverName
 }
 
+var (
+	ErrServerNotFound = errors.New("Server Not Found")
+	ErrVolumeNotFound = errors.New("Volume Not Found")
+)
+
 // Remove all servers at hetzner project which is running
 // beyond 24 hours. This is because we want to reduce cost
 // at all times and we really don't want dead expesive servers
@@ -35,9 +40,7 @@ func ServerNameFromSHA256(sum string) string {
 // "If you are 1 day old then you are dead to me."
 // -- Antony J.R
 func DestroyAllDeadServers(client *hcloud.Client) error {
-	sclient := &client.Server
-	vclient := &client.Volume
-	servers, err := sclient.All(
+	servers, err := client.Server.All(
 		context.Background(),
 	)
 
@@ -45,73 +48,28 @@ func DestroyAllDeadServers(client *hcloud.Client) error {
 		return err
 	}
 
-	loc, err := time.LoadLocation("UTC")
-	if err != nil {
-		return err
-	}
-	now := time.Now().In(loc)
+	now := time.Now().UTC()
 
 	for _, server := range servers {
 		if !strings.HasPrefix(server.Name, "build-") {
 			continue
 		}
 
-		serverName := server.Name
-		diff := now.Sub(server.Created)
-		hours := int(diff.Hours())
-
-		if hours >= 24 {
-			_, _, _ = sclient.DeleteWithResult(
-				context.Background(),
-				server,
-			)
-			_ = DeleteVolume(vclient, serverName)
+		if now.Sub(server.Created) >= 24*time.Hour {
+			_ = TryDeleteServer(client, server.Name, 5, 5)
 		}
 	}
 
-	return nil
+	return DestroyOrphanVolumes(client)
 }
 
-func TryDeleteServer(client *hcloud.Client, serverName string, maxTries int, interval int) error {
-	sclient := &client.Server
-	vclient := &client.Volume
-	delTries := 0
-	for {
-		delErr := DeleteServer(sclient, serverName)
-
-		if delErr == nil || delErr.Error() == "Server Not Found" {
-			tries := 0
-
-			for {
-				err := DeleteVolume(vclient, serverName)
-				if err == nil {
-					break
-				}
-				fmt.Println("Volume Destroy Error: ", err.Error())
-
-				tries++
-				fmt.Println("Destroying Volume Failed. Retrying... ")
-				time.Sleep(time.Second * time.Duration(interval))
-
-				if tries > maxTries {
-					return errors.New("Cannot Destroy Remote Volume. " + err.Error())
-				}
-			}
-		}
-
-		delTries++
-		fmt.Println("Destroying Server Failed. Retrying... ")
-		time.Sleep(time.Second * time.Duration(interval))
-		if delTries > maxTries {
-			return errors.New("Cannot Destroy Remote Server. " + delErr.Error())
-		}
-	}
-
-	return nil
-}
-
-func DeleteServer(sclient *hcloud.ServerClient, serverName string) error {
-	servers, err := sclient.All(
+// A server deleted from the inside, or deleted without waiting,
+// leaves its build-*-vol volume detached. Nothing lists volumes
+// otherwise, so they would be billed forever. Fresh volumes are
+// skipped: CreateServer attaches the volume a few seconds after
+// creating it.
+func DestroyOrphanVolumes(client *hcloud.Client) error {
+	vols, err := client.Volume.All(
 		context.Background(),
 	)
 
@@ -119,21 +77,79 @@ func DeleteServer(sclient *hcloud.ServerClient, serverName string) error {
 		return err
 	}
 
-	for _, server := range servers {
-		if server.Name == serverName {
-			_, _, err := sclient.DeleteWithResult(
-				context.Background(),
-				server)
+	now := time.Now().UTC()
+	for _, volume := range vols {
+		if !strings.HasPrefix(volume.Name, "build-") ||
+			!strings.HasSuffix(volume.Name, "-vol") ||
+			volume.Server != nil ||
+			now.Sub(volume.Created) < 30*time.Minute {
+			continue
+		}
 
-			if err != nil {
-				return err
-			}
-
-			return nil
+		fmt.Println("Destroying Orphan Volume: ", volume.Name)
+		_, err := client.Volume.Delete(
+			context.Background(),
+			volume,
+		)
+		if err != nil {
+			fmt.Println("Volume Destroy Error: ", err.Error())
 		}
 	}
 
-	return errors.New("Server Not Found")
+	return nil
+}
+
+// Delete the server, wait until Hetzner has finished (which also
+// detaches the volume) and then delete the volume. A resource that
+// is already gone counts as deleted.
+func TryDeleteServer(client *hcloud.Client, serverName string, maxTries int, interval int) error {
+	var lastErr error
+	for try := 0; try <= maxTries; try++ {
+		if try > 0 {
+			fmt.Println("Destroying Server Failed. Retrying... ", lastErr.Error())
+			time.Sleep(time.Second * time.Duration(interval))
+		}
+
+		err := DeleteServer(client, serverName)
+		if err != nil && !errors.Is(err, ErrServerNotFound) {
+			lastErr = err
+			continue
+		}
+
+		err = DeleteVolume(&client.Volume, serverName)
+		if err == nil || errors.Is(err, ErrVolumeNotFound) {
+			return nil
+		}
+		lastErr = err
+	}
+
+	return errors.New("Cannot Destroy Remote Server or Volume. " + lastErr.Error())
+}
+
+func DeleteServer(client *hcloud.Client, serverName string) error {
+	server, _, err := client.Server.GetByName(
+		context.Background(),
+		serverName,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if server == nil {
+		return ErrServerNotFound
+	}
+
+	result, _, err := client.Server.DeleteWithResult(
+		context.Background(),
+		server,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	return client.Action.WaitFor(context.Background(), result.Action)
 }
 
 func GetVolumeLinuxDeviceForServer(client *hcloud.Client, serverName string) (string, error) {
@@ -158,31 +174,81 @@ func GetVolumeLinuxDeviceForServer(client *hcloud.Client, serverName string) (st
 
 func DeleteVolume(vclient *hcloud.VolumeClient, serverName string) error {
 	volName := fmt.Sprintf("%s-vol", serverName)
-	vols, err := vclient.All(
+	volume, _, err := vclient.GetByName(
 		context.Background(),
+		volName,
 	)
 
 	if err != nil {
 		return err
 	}
 
-	for _, volume := range vols {
-		if volume.Name == volName {
-			_, err := vclient.Delete(
+	if volume == nil {
+		return ErrVolumeNotFound
+	}
+
+	_, err = vclient.Delete(
+		context.Background(),
+		volume,
+	)
+
+	return err
+}
+
+// Run on the build server itself after a successful build. The
+// server cannot delete its volume once it is gone, so the order is
+// detach volume, delete volume, delete server. The caller must have
+// unmounted the volume and turned off any swap on it.
+func DestroySelf(client *hcloud.Client, serverName string) error {
+	volName := fmt.Sprintf("%s-vol", serverName)
+	volume, _, err := client.Volume.GetByName(
+		context.Background(),
+		volName,
+	)
+	if err != nil {
+		return err
+	}
+
+	if volume != nil {
+		if volume.Server != nil {
+			action, _, err := client.Volume.Detach(
 				context.Background(),
 				volume,
 			)
-
 			if err != nil {
 				return err
 			}
 
-			return nil
+			err = client.Action.WaitFor(context.Background(), action)
+			if err != nil {
+				return err
+			}
+		}
 
+		tries := 0
+		for {
+			_, err = client.Volume.Delete(
+				context.Background(),
+				volume,
+			)
+			if err == nil {
+				break
+			}
+
+			tries++
+			if tries > 20 {
+				return err
+			}
+			time.Sleep(time.Second * time.Duration(5))
 		}
 	}
 
-	return errors.New("Volume Not Found")
+	// Deleting ourselves ends this process, so this goes last.
+	err = DeleteServer(client, serverName)
+	if errors.Is(err, ErrServerNotFound) {
+		return nil
+	}
+	return err
 }
 
 func GetServerAgeInHours(sclient *hcloud.ServerClient, serverName string) (int, error) {
@@ -209,7 +275,7 @@ func GetServerAgeInHours(sclient *hcloud.ServerClient, serverName string) (int, 
 		}
 	}
 
-	return -1, errors.New("Server Not Found")
+	return -1, ErrServerNotFound
 }
 
 func UpdateSSHKeyLabel(sclient *hcloud.SSHKeyClient, sshKey *hcloud.SSHKey, key string, value string) (*hcloud.SSHKey, error) {

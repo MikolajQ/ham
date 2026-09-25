@@ -3,27 +3,31 @@ package core
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
 
 const (
 	TargetImage = "ubuntu-24.04"
-
-	// Most Stable, Reliable and Cheapest
-	// Location by Hetzner
-	TargetLocation = "nbg1"
 )
+
+// Tried in order. nbg1 is the cheapest and most stable location;
+// fsn1 and hel1 are only used when Hetzner has no capacity for the
+// server type there. The volume is created in the same location.
+var TargetLocations = []string{"nbg1", "fsn1", "hel1"}
 
 func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName string) (*hcloud.Server, error) {
 	// Get Server Image
-	serverImage, _, err := client.Image.Get(
+	serverImage, _, err := client.Image.GetForArchitecture(
 		context.Background(),
 		TargetImage,
+		server.Architecture,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if serverImage == nil {
+		return nil, errors.New("Image " + TargetImage + " not found")
 	}
 
 	// Get ham-ssh-key SSH Key
@@ -45,13 +49,33 @@ func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName s
 		sshList = append(sshList, defKey)
 	}
 
-	// Get Location
+	var lastErr error
+	for _, locationName := range TargetLocations {
+		created, err := createServerAt(client, server, serverName, serverImage, sshList, locationName)
+		if err == nil {
+			return created, nil
+		}
+
+		lastErr = err
+		if !isCapacityError(err) {
+			return nil, err
+		}
+	}
+
+	return nil, lastErr
+}
+
+func createServerAt(client *hcloud.Client, server *hcloud.ServerType, serverName string,
+	serverImage *hcloud.Image, sshList []*hcloud.SSHKey, locationName string) (*hcloud.Server, error) {
 	location, _, err := client.Location.Get(
 		context.Background(),
-		TargetLocation,
+		locationName,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if location == nil {
+		return nil, errors.New("Location " + locationName + " not found")
 	}
 
 	startAfterCreate := true
@@ -77,19 +101,23 @@ func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName s
 		context.Background(),
 		volCreateOpts,
 	)
-
 	if err != nil {
 		return nil, err
 	}
 
-	// Action Status and Error
-	ok := false
-	errMsg := ""
+	deleteVolume := func() {
+		_, _ = client.Volume.Delete(
+			context.Background(),
+			volCreateResult.Volume,
+		)
+	}
 
-	// Check Current Action First
-	checkAction(client, volCreateResult.Action, &ok, &errMsg)
-	if !ok {
-		return nil, errors.New(errMsg)
+	if volCreateResult.Action != nil {
+		err = client.Action.WaitFor(context.Background(), volCreateResult.Action)
+		if err != nil {
+			deleteVolume()
+			return nil, err
+		}
 	}
 
 	// Server Creation Options
@@ -110,16 +138,7 @@ func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName s
 
 	err = serverCreateOpts.Validate()
 	if err != nil {
-		// Destroy all Volumes we created before\
-		_, volErr := client.Volume.Delete(
-			context.Background(),
-			volCreateResult.Volume,
-		)
-
-		if volErr != nil {
-			return nil, err
-		}
-
+		deleteVolume()
 		return nil, err
 	}
 
@@ -128,76 +147,45 @@ func CreateServer(client *hcloud.Client, server *hcloud.ServerType, serverName s
 		context.Background(),
 		serverCreateOpts,
 	)
-
 	if err != nil {
-
-		// Destroy all Volumes we created before\
-		_, volErr := client.Volume.Delete(
-			context.Background(),
-			volCreateResult.Volume,
-		)
-
-		if volErr != nil {
-			return nil, err
-		}
-
+		deleteVolume()
 		return nil, err
 	}
 
 	// Wait till we Success or Failure
 	// result from Action that is currently
 	// running.
-	ok = false
-	errMsg = ""
-
-	// Check Current Action First
-	checkAction(client, createResult.Action, &ok, &errMsg)
-	if !ok {
-		// Destroy all Volumes we created before\
-		_, volErr := client.Volume.Delete(
-			context.Background(),
-			volCreateResult.Volume,
-		)
-
-		if volErr != nil {
-			return nil, err
+	actions := append([]*hcloud.Action{createResult.Action}, createResult.NextActions...)
+	err = client.Action.WaitFor(context.Background(), actions...)
+	if err != nil {
+		// The server may exist even though an action failed.
+		delResult, _, delErr := client.Server.DeleteWithResult(context.Background(), createResult.Server)
+		if delErr == nil {
+			_ = client.Action.WaitFor(context.Background(), delResult.Action)
 		}
-
-		return nil, errors.New(errMsg)
+		deleteVolume()
+		return nil, err
 	}
 
 	return createResult.Server, nil
 }
 
-func checkAction(client *hcloud.Client, action *hcloud.Action, ok *bool, errMsg *string) {
-	*ok = false
-	*errMsg = ""
-	targetAction := action
-	var err error
-	for {
-		if targetAction == nil {
-			*ok = true
-			break
-		}
-
-		if targetAction.Status == hcloud.ActionStatusRunning {
-			time.Sleep(time.Second * time.Duration(2))
-			targetAction, _, err = client.Action.GetByID(
-				context.Background(),
-				targetAction.ID,
-			)
-			if err != nil {
-				*ok = false
-				*errMsg = err.Error()
-				break
-			}
-			continue
-		} else if targetAction.Status == hcloud.ActionStatusSuccess {
-			*ok = true
-		} else if targetAction.Status == hcloud.ActionStatusError {
-			*ok = false
-			*errMsg = "Action Failed (" + action.ErrorMessage + ")"
-		}
-		break
+func isCapacityError(err error) bool {
+	codes := []hcloud.ErrorCode{
+		hcloud.ErrorCodeResourceUnavailable,
+		hcloud.ErrorCodePlacementError,
 	}
+	if hcloud.IsError(err, codes...) {
+		return true
+	}
+
+	var actionErr hcloud.ActionError
+	if errors.As(err, &actionErr) {
+		for _, code := range codes {
+			if actionErr.Code == string(code) {
+				return true
+			}
+		}
+	}
+	return false
 }

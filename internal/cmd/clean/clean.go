@@ -2,10 +2,8 @@ package clean
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/antony-jr/ham/internal/core"
 	"github.com/antony-jr/ham/internal/helpers"
@@ -86,63 +84,12 @@ func destroyHamServers(client *hcloud.Client) error {
 			continue
 		}
 
-		serverName := server.Name
 		fmt.Printf("Destroying... %s\n", server.Name)
-		result, _, err := client.Server.DeleteWithResult(
-			context.Background(),
-			server,
-		)
-
-		if err != nil {
-			return err
-		}
-
-		ok := false
-		errMsg := ""
-		checkAction(client, result.Action, &ok, &errMsg)
-		if !ok {
-			return errors.New(errMsg)
-		}
-
-		// Delete Volumes too
-		err = helpers.DeleteVolume(&client.Volume, serverName)
+		err = helpers.TryDeleteServer(client, server.Name, 20, 5)
 		if err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
-
-func checkAction(client *hcloud.Client, action *hcloud.Action, ok *bool, errMsg *string) {
-	*ok = false
-	*errMsg = ""
-	targetAction := action
-	var err error
-	for {
-		if targetAction == nil {
-			*ok = true
-			break
-		}
-
-		if targetAction.Status == hcloud.ActionStatusRunning {
-			time.Sleep(time.Second * time.Duration(2))
-			targetAction, _, err = client.Action.GetByID(
-				context.Background(),
-				targetAction.ID,
-			)
-			if err != nil {
-				*ok = false
-				*errMsg = err.Error()
-				break
-			}
-			continue
-		} else if targetAction.Status == hcloud.ActionStatusSuccess {
-			*ok = true
-		} else if targetAction.Status == hcloud.ActionStatusError {
-			*ok = false
-			*errMsg = action.ErrorMessage
-		}
-		break
-	}
+	return helpers.DestroyOrphanVolumes(client)
 }
