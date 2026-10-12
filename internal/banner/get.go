@@ -11,7 +11,7 @@ import (
 func GetStartBanner() {
 	in := `# Get Build`
 
-	out, _ := glamour.Render(in, "dark")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
@@ -27,7 +27,7 @@ func GetBuildFailedBanner(serverName string) {
 
 	in = fmt.Sprintf(in, serverName)
 
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
@@ -43,7 +43,7 @@ func GetConnectFailBanner(serverName string) {
 
 	in = fmt.Sprintf(in, serverName)
 
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
@@ -59,7 +59,7 @@ func GetMalformedJSONBanner(serverName string) {
 
 	in = fmt.Sprintf(in, serverName)
 
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
@@ -69,13 +69,13 @@ func GetRecipeBanner(name string, ver string, hash string) {
 	in += "**SHA-256**: %s"
 	in = fmt.Sprintf(in, name, ver, hash)
 
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
 func GetCmdProgressBanner() {
 	in := "# Progress\n"
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
@@ -95,13 +95,13 @@ func GetServerPriceInformationBanner(lines []string) {
 	in += "A failed build kept with -k/-b stays until `ham clean`. "
 	in += "A later `ham get` or `ham clean` also deletes build servers older than 24 hours and volumes left without a server.\n"
 
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 
 func GetQuestionBanner() {
 	in := "# Quesions\n"
-	out, _ := glamour.Render(in, "auto")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 

@@ -21,7 +21,7 @@ func GenKeyStartBanner(c, s, l, o, ou, cn, e string, ks int) {
 
 	in = fmt.Sprintf(in, c, s, l, o, ou, cn, e, ks)
 
-	out, _ := glamour.Render(in, "dark")
+	out, _ := glamour.Render(in, glamourStyle())
 	fmt.Print(out)
 }
 

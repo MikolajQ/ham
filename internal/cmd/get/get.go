@@ -42,6 +42,7 @@ type getT struct {
 	TestingBinary           string `cli:"e,testing-binary" usage:"Path to ham-build binary to use in the Remote Server during Testing. (Developer)"`
 	TestingSSHIP            string `cli:"i,testing-ssh-ip" usage:"Run a Test Run without Creating Servers and Use the given IP as Build Server. (Developer)"`
 	Force                   bool   `cli:"f,force" usage:"Force start a build even if the recipe was built Already."`
+	Parallel                bool   `cli:"parallel" usage:"Allow creating a build server while another build-* server exists (e.g. a kept, failed build of an older recipe)."`
 	ServerType              string `cli:"m,server-type" usage:"Hetzner server type, e.g. ccx33. Default: cpx62 (local disk), then ccx33 (+400 GB volume) if no capacity."`
 }
 
@@ -360,6 +361,18 @@ Local Recipe:
 					ipAddr = fmt.Sprintf("%s:22", currentBuildServer.PublicNet.IPv4.IP.String())
 				} else {
 					ipAddr = "127.1:22"
+				}
+			}
+
+			// A changed recipe has a new SHA, so it never matches the server of a build that is
+			// still running or kept for debugging — without this check `ham get -f` happily
+			// starts a second, paid server next to it.
+			if !serverRunning && !testingRun && !argv.Parallel {
+				for _, server := range servers {
+					if strings.HasPrefix(server.Name, "build-") {
+						return fmt.Errorf("another build server exists: %s (created %s); resume it on the server or delete it with `ham clean`, or pass --parallel",
+							server.Name, server.Created.Format(time.RFC3339))
+					}
 				}
 			}
 
