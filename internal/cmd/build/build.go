@@ -29,6 +29,10 @@ type buildT struct {
 	VarsPath   string `cli:"*a,vars" usage:"JSON file path containing all required build variables prompted"`
 	KeepServer bool   `cli:"k,keep-server" usage:"Don't Destroy the Remote Server on any error."`
 	FromStep   int    `cli:"f,from-step" usage:"Skip build entries before this index (resume a kept, failed build; see /tmp/ham-build.result)" dft:"0"`
+	// The server name and its self-destroy derive from the recipe sum, so a
+	// changed ham.yml used to mean a new server. With this flag a kept server
+	// runs the changed recipe under the identity of --sum.
+	AcceptRecipeChange bool `cli:"accept-recipe-change" usage:"Run a changed ham.yml on a kept server; the build keeps the identity (server name, self-destroy) of --sum"`
 }
 
 // Outcome of the last run for scripts on the build server (resume, monitoring):
@@ -70,20 +74,21 @@ func NewCommand() *cli.Command {
 			fmt.Printf("v%s\n", hf.Version)
 			fmt.Printf("SHA256 Sum: %s\n", hf.SHA256Sum)
 
+			buildID := hf.SHA256Sum
 			if hf.SHA256Sum != argv.Sum {
-				return errors.New("SHA256 Mismatch, Bad File.")
+				if !argv.AcceptRecipeChange {
+					return errors.New("SHA256 Mismatch, Bad File.")
+				}
+				fmt.Printf("ham.yml changed, keeping the build identity %s\n", argv.Sum)
+				buildID = argv.Sum
 			}
 
 			// We assume the current server name at hetzner to
 			// be this and we use this assumption to destroy
 			// the server when the build is done.
-			serverName := helpers.ServerNameFromSHA256(hf.SHA256Sum)
+			serverName := helpers.ServerNameFromSHA256(buildID)
 			fmt.Printf("Build Server: %s\n", serverName)
 
-			keepArg := ""
-			if argv.KeepServer {
-				keepArg = "--keep-server"
-			}
 			// len(build) = only post_build (e.g. a failed upload).
 			if argv.FromStep < 0 || argv.FromStep > len(hf.Build) {
 				return fmt.Errorf("--from-step %d out of range (0..%d)", argv.FromStep, len(hf.Build))
@@ -95,17 +100,17 @@ func NewCommand() *cli.Command {
 				LogFilePerm: 0640,
 				WorkDir:     "./",
 				Umask:       027,
-				Args: []string{"ham",
-					"build",
-					keepArg,
-					"-r",
-					argv.RecipePath,
-					"-a",
-					argv.VarsPath,
-					"-s",
-					argv.Sum,
-					"-f",
-					strconv.Itoa(argv.FromStep)},
+			}
+			dctx.Args = []string{"ham", "build",
+				"-r", argv.RecipePath,
+				"-a", argv.VarsPath,
+				"-s", argv.Sum,
+				"-f", strconv.Itoa(argv.FromStep)}
+			if argv.KeepServer {
+				dctx.Args = append(dctx.Args, "--keep-server")
+			}
+			if argv.AcceptRecipeChange {
+				dctx.Args = append(dctx.Args, "--accept-recipe-change")
 			}
 
 			d, err := dctx.Reborn()
@@ -152,6 +157,7 @@ func NewCommand() *cli.Command {
 					writeResult("success")
 				} else {
 					writeResult(fmt.Sprintf("failed %d", failedStep))
+					runOnFailure(hf.OnFailure, buildID, failedStep, entryTitle(hf.Build, failedStep))
 					// A failed daemon used to stay alive after printing its error, which
 					// blocked a resume and hid the failure from monitoring. Whatever hangs
 					// after this point, the process ends.
@@ -161,10 +167,10 @@ func NewCommand() *cli.Command {
 					})
 				}
 				if succeeded || !argv.KeepServer {
-					destroyCurrentServer(client, hf.SHA256Sum)
+					destroyCurrentServer(client, buildID)
 					return
 				}
-				scheduleFailedServerCleanup(hf.SHA256Sum)
+				scheduleFailedServerCleanup(buildID)
 			}()
 
 			// A new run on a kept server cancels the cleanup left by
@@ -194,7 +200,7 @@ func NewCommand() *cli.Command {
 
 			// Install Dependencies for LineageOS build/AOSP
 			{
-				term, err := NewTerminal(hf.SHA256Sum + "-prebuild")
+				term, err := NewTerminal(buildID + "-prebuild")
 				if err != nil {
 					hamSSHKey, _ = helpers.UpdateSSHKeyLabel(&client.SSHKey, hamSSHKey, serverName, "failed")
 					return checkErrorStatus(&status, err)
@@ -320,7 +326,7 @@ func NewCommand() *cli.Command {
 			}
 
 			// Start Executing Recipe Commands.
-			terminal, err := NewTerminal(hf.SHA256Sum)
+			terminal, err := NewTerminal(buildID)
 			if err != nil {
 				hamSSHKey, _ = helpers.UpdateSSHKeyLabel(&client.SSHKey, hamSSHKey, serverName, "failed")
 				return checkErrorStatus(&status, err)
@@ -389,7 +395,7 @@ func NewCommand() *cli.Command {
 			status.Status = "Post Build"
 			status.Title = "Running Post Build"
 
-			pbTerminal, err := NewTerminal(hf.SHA256Sum + "-postbuild")
+			pbTerminal, err := NewTerminal(buildID + "-postbuild")
 			if err != nil {
 				hamSSHKey, _ = helpers.UpdateSSHKeyLabel(&client.SSHKey, hamSSHKey, serverName, "failed")
 				return checkErrorStatus(&status, err)
@@ -483,10 +489,12 @@ func destroyCurrentServer(client *hcloud.Client, UniqueID string) {
 // failed build after FailedServerTTL. Kept servers used to run until
 // the client or its watchdog came back, which costs money when that
 // machine is switched off. `touch /tmp/ham-keep` or
-// `systemctl stop ham-ttl.timer` keeps the server.
+// `systemctl stop ham-ttl.timer` keeps the server. 12 hours: a failure
+// at night is still there in the morning, and the extra hours cost
+// less than rebuilding out/ on a new server.
 const (
 	FailedServerUnit = "ham-ttl"
-	FailedServerTTL  = 6 * time.Hour
+	FailedServerTTL  = 12 * time.Hour
 	KeepServerFile   = "/tmp/ham-keep"
 )
 
@@ -539,7 +547,9 @@ func releaseBuildVolume() {
 }
 
 func statusServer(state *statusT) {
-	listener, err := net.Listen("tcp", "0.0.0.0:1695")
+	// Local only: the client reads the status through SSH (ham
+	// build-status), and an open port took an unauthenticated "quit".
+	listener, err := net.Listen("tcp", "127.0.0.1:1695")
 	if err != nil {
 		state.Error = err
 		return
@@ -584,4 +594,57 @@ func handleRequest(state *statusT, conn net.Conn) {
 
 	conn.Write([]byte(resp))
 	conn.Close()
+}
+
+func entryTitle(build []struct {
+	Title string `yaml:"name"`
+	Cmd   string `yaml:"run"`
+}, step int) string {
+	switch {
+	case step < 0:
+		return "prebuild"
+	case step >= len(build):
+		return "post_build"
+	default:
+		return build[step].Title
+	}
+}
+
+// on_failure entries of the recipe, in their own terminal, after a failed
+// build. Best effort: errors are printed, and the whole run is cut off after
+// 10 minutes so that cleanup scheduling still happens.
+func runOnFailure(cmds []string, uid string, step int, title string) {
+	if len(cmds) == 0 {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		term, err := NewTerminal(uid + "-onfailure")
+		if err != nil {
+			fmt.Println("on_failure: ", err.Error())
+			return
+		}
+		defer term.CloseTerminal()
+		setup := fmt.Sprintf("cd /ham-build 2>/dev/null || cd /; export HAM_FAILED_STEP=%d HAM_FAILED_TITLE='%s'",
+			step, strings.ReplaceAll(title, "'", "'\\''"))
+		if err := term.ExecTerminal(-1, setup); err == nil {
+			err = term.WaitTerminal(-1)
+		}
+		for index, cmd := range cmds {
+			if err := term.ExecTerminal(index, cmd); err != nil {
+				fmt.Println("on_failure: ", err.Error())
+				return
+			}
+			if err := term.WaitTerminal(index); err != nil {
+				fmt.Println("on_failure: ", err.Error())
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Minute):
+		fmt.Println("on_failure: timeout after 10 minutes")
+	}
 }

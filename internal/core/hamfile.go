@@ -18,7 +18,7 @@ type HAMFile struct {
 	Args      []struct {
 		ID       string `yaml:"id"`
 		Prompt   string `yaml:"prompt"`
-		Required *bool  `yaml:"required",omitempty`
+		Required *bool  `yaml:"required,omitempty"`
 		Type     string `yaml:"type"`
 	}
 
@@ -28,6 +28,12 @@ type HAMFile struct {
 	}
 
 	PostBuild []string `yaml:"post_build"`
+
+	// Run on the build server after a failed build (best effort, at most
+	// 10 minutes), e.g. to send a notification. HAM_FAILED_STEP and
+	// HAM_FAILED_TITLE name the entry that failed (-1 = before the build
+	// entries, len(build) = post_build).
+	OnFailure []string `yaml:"on_failure"`
 }
 
 func NewHAMFile(RecipePath string) (HAMFile, error) {

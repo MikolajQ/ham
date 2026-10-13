@@ -205,6 +205,33 @@ post_build:
 Note here that we use **/ham-recipe** which is our copy of the ham recipe we are currently building, the ham recipe 
 can have any files like bash scripts to use during the build.
 
+### ```on_failure```
+
+A list of linux commands run on the build server after a failed build, for example to send a notification.
+`HAM_FAILED_STEP` holds the index of the build entry that failed (`-1` = before the build entries, the number of
+build entries = `post_build`) and `HAM_FAILED_TITLE` its name. Best effort: the whole list is cut off after 10
+minutes, and a failing command only ends the list.
+
+```yaml
+on_failure:
+  - /ham-recipe/scripts/notify.sh "Build failed at $HAM_FAILED_TITLE"
+```
+
+### How entries run
+
+Every `run` of `build` (and every command of `post_build` and `on_failure`) is written to a file and sourced by
+one bash session with stdin from `/dev/null`: `cd` and `export` carry over to later entries, while nothing can
+wait for input on the terminal (`GIT_TERMINAL_PROMPT=0` is set as well). The first failing command (`set -e`)
+fails the entry.
+
+### Resuming a kept build
+
+On a server kept after a failure (`-k`/`-b`), `ham build --keep-server -s <sum> -r /ham-recipe -a vars.json -f N`
+starts again at build entry `N` (the number of build entries = only `post_build`); `/tmp/ham-build.result`
+holds `running`, `success` or `failed <entry>`. `--accept-recipe-change` runs a changed `ham.yml` under the
+identity (server name, self-destroy) of the original `--sum`. A kept failed server deletes itself after 12 hours
+unless `/tmp/ham-keep` exists.
+
 ## Examples 
 
 You can look at the [community recipes](https://github.com/ham-community) on how it is done.

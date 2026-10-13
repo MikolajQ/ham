@@ -43,6 +43,10 @@ func NewTerminal(UniqueID string) (Terminal, error) {
 	file.Close()
 
 	t.term.Write([]byte("set -e \n"))
+	// Nothing may wait for an answer on the terminal: the recipe is fed
+	// through it, so a prompt would either swallow recipe lines or hang
+	// until the step timeout.
+	t.term.Write([]byte("export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never \n"))
 	t.term.Write([]byte("export HAM_CMD_INDEX=0 \n"))
 	// t.term.Write([]byte(fmt.Sprintf("trap \"echo $HAM_CMD_INDEX' failed' > /tmp/%s.ham.command.status\" ERR \n", UniqueID)))
 	t.term.Write([]byte(fmt.Sprintf("trap \"env | grep HAM_CMD_INDEX | cut -d'=' -f2 | sed 's/$/ failed/'|cat > /tmp/%s.ham.command.status\" ERR \n", UniqueID)))
@@ -62,11 +66,16 @@ func NewTerminal(UniqueID string) (Terminal, error) {
 
 				size = size + written
 
-				if size >= 1024*1024*5 {
+				// Keep the previous part: with ninja -k the error that
+				// matters can be followed by megabytes of other output.
+				if size >= 1024*1024*50 {
 					size = 0
 					logFile.Close()
-					os.Remove(filePath)
+					os.Rename(filePath, filePath+".1")
 					logFile, err = os.Create(filePath)
+					if err != nil {
+						break
+					}
 				}
 			}
 		}
@@ -146,8 +155,16 @@ func (Term *Terminal) ExecTerminal(Index int, Command string) error {
 
 	Term.term.Write([]byte(fmt.Sprintf("export HAM_CMD_INDEX=%d \n", Index)))
 
-	Command = strings.TrimSuffix(Command, "\n")
-	Term.term.Write([]byte(fmt.Sprintf("%s ; echo $HAM_CMD_INDEX' success' > /tmp/%s.ham.command.status\n", Command, Term.uid)))
+	// The entry runs from a file, sourced by the same shell (cd and
+	// exports carry over to later entries as before), with stdin from
+	// /dev/null. Typed into the terminal line by line, any command that
+	// read stdin swallowed the following recipe lines, lines over the
+	// 4 KiB tty limit broke, and interactive history expansion mangled "!".
+	script := fmt.Sprintf("/tmp/%s.ham.step.%d.sh", Term.uid, Index)
+	if err := os.WriteFile(script, []byte(strings.TrimSuffix(Command, "\n")+"\n"), 0600); err != nil {
+		return err
+	}
+	Term.term.Write([]byte(fmt.Sprintf("echo '== ham entry %d =='; sed 's/^/  > /' %s; . %s < /dev/null ; echo $HAM_CMD_INDEX' success' > /tmp/%s.ham.command.status\n", Index, script, script, Term.uid)))
 
 	time.Sleep(1 * time.Second)
 	status, err = ioutil.ReadFile(fmt.Sprintf("/tmp/%s.ham.command.status", Term.uid))
