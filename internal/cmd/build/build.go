@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,16 @@ type buildT struct {
 	RecipePath string `cli:"*r,recipe" usage:"Recipe file path which has the ham.yaml"`
 	VarsPath   string `cli:"*a,vars" usage:"JSON file path containing all required build variables prompted"`
 	KeepServer bool   `cli:"k,keep-server" usage:"Don't Destroy the Remote Server on any error."`
+	FromStep   int    `cli:"f,from-step" usage:"Skip build entries before this index (resume a kept, failed build; see /tmp/ham-build.result)" dft:"0"`
+}
+
+// Outcome of the last run for scripts on the build server (resume, monitoring):
+// "running", "success" or "failed <build entry index>" (-1 = before the build entries,
+// len(build) = post_build).
+const ResultFile = "/tmp/ham-build.result"
+
+func writeResult(result string) {
+	_ = os.WriteFile(ResultFile, []byte(result+"\n"), 0644)
 }
 
 type statusT struct {
@@ -73,6 +84,10 @@ func NewCommand() *cli.Command {
 			if argv.KeepServer {
 				keepArg = "--keep-server"
 			}
+			// len(build) = only post_build (e.g. a failed upload).
+			if argv.FromStep < 0 || argv.FromStep > len(hf.Build) {
+				return fmt.Errorf("--from-step %d out of range (0..%d)", argv.FromStep, len(hf.Build))
+			}
 			dctx := &daemon.Context{
 				PidFileName: "/tmp/com.github.antony-jr.ham.pid",
 				PidFilePerm: 0644,
@@ -88,7 +103,9 @@ func NewCommand() *cli.Command {
 					"-a",
 					argv.VarsPath,
 					"-s",
-					argv.Sum},
+					argv.Sum,
+					"-f",
+					strconv.Itoa(argv.FromStep)},
 			}
 
 			d, err := dctx.Reborn()
@@ -128,7 +145,21 @@ func NewCommand() *cli.Command {
 			// staying alive. --keep-server only keeps a failed build
 			// around for debugging.
 			succeeded := false
+			failedStep := -1
+			writeResult("running")
 			defer func() {
+				if succeeded {
+					writeResult("success")
+				} else {
+					writeResult(fmt.Sprintf("failed %d", failedStep))
+					// A failed daemon used to stay alive after printing its error, which
+					// blocked a resume and hid the failure from monitoring. Whatever hangs
+					// after this point, the process ends.
+					time.AfterFunc(3*time.Minute, func() {
+						fmt.Println("Exit watchdog: build failed, process still alive, exiting.")
+						os.Exit(1)
+					})
+				}
 				if succeeded || !argv.KeepServer {
 					destroyCurrentServer(client, hf.SHA256Sum)
 					return
@@ -310,6 +341,11 @@ func NewCommand() *cli.Command {
 
 			buildLen := len(hf.Build)
 			for index, el := range hf.Build {
+				if index < argv.FromStep {
+					fmt.Printf("Skipping entry %d (%s): --from-step %d\n", index, el.Title, argv.FromStep)
+					continue
+				}
+				failedStep = index
 				if status.Quit {
 					hamSSHKey, _ = helpers.UpdateSSHKeyLabel(&client.SSHKey, hamSSHKey, serverName, "failed")
 					time.Sleep(time.Minute * time.Duration(1))
@@ -343,6 +379,7 @@ func NewCommand() *cli.Command {
 				status.Percentage = percent
 			}
 
+			failedStep = len(hf.Build)
 			status.Percentage = 99
 			status.Status = "Finished"
 			status.Title = "Build Finished"
