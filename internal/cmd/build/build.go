@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -78,6 +79,9 @@ func NewCommand() *cli.Command {
 			if hf.SHA256Sum != argv.Sum {
 				if !argv.AcceptRecipeChange {
 					return errors.New("SHA256 Mismatch, Bad File.")
+				}
+				if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(argv.Sum) {
+					return fmt.Errorf("--sum %q is not a SHA-256 sum", argv.Sum)
 				}
 				fmt.Printf("ham.yml changed, keeping the build identity %s\n", argv.Sum)
 				buildID = argv.Sum
