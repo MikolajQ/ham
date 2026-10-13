@@ -41,6 +41,10 @@ type buildT struct {
 // len(build) = post_build).
 const ResultFile = "/tmp/ham-build.result"
 
+// Identity of the build on this server (the sum its name derives from), kept
+// across resumes with a changed ham.yml (--accept-recipe-change).
+const IDFile = "/tmp/ham-build.id"
+
 func writeResult(result string) {
 	_ = os.WriteFile(ResultFile, []byte(result+"\n"), 0644)
 }
@@ -156,6 +160,7 @@ func NewCommand() *cli.Command {
 			succeeded := false
 			failedStep := -1
 			writeResult("running")
+			_ = os.WriteFile(IDFile, []byte(buildID+"\n"), 0644)
 			defer func() {
 				if succeeded {
 					writeResult("success")
